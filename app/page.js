@@ -1,7 +1,7 @@
 
 "use client";
 import { createClient } from "@supabase/supabase-js";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -15,16 +15,26 @@ const categories = [
   { name: "Terrarystyka", icon: "🦎", description: "Produkty do terrarium" },
 ];
 
-const products = [
-  { name: "Karma dla psa", category: "Psy", icon: "🐶" },
-  { name: "Akcesoria dla kota", category: "Koty", icon: "🐱" },
-  { name: "Przysmaki dla pupila", category: "Psy", icon: "🦴" },
-  { name: "Produkty dla gryzoni", category: "Gryzonie", icon: "🐹" },
-];
-
 export default function Home() {
+  const [products, setProducts] = useState([]);
   const [search, setSearch] = useState("");
+useEffect(() => {
+  async function loadProducts() {
+    const { data, error } = await supabase
+      .from("products")
+      .select("*")
+      .eq("active", true)
+      .order("name");
 
+    if (!error && data) {
+      setProducts(data);
+    } else if (error) {
+      console.error("Błąd pobierania produktów:", error);
+    }
+  }
+
+  loadProducts();
+}, []);
   const filteredCategories = categories.filter((item) =>
     `${item.name} ${item.description}`
       .toLowerCase()
