@@ -23,7 +23,8 @@ export default function AdminProductsPage() {
   const [products, setProducts] = useState([]);
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState("Ładowanie produktów...");
-  const [savingId, setSavingId] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState(null);
 
   useEffect(() => {
     async function loadProducts() {
@@ -48,12 +49,12 @@ export default function AdminProductsPage() {
 
       const { data, error } = await supabase
         .from("products")
-        .select("id, name, category, price, stock")
+        .select("*")
         .order("name")
         .limit(1000);
 
       if (error) {
-        setMessage("Nie udało się pobrać produktów: " + error.message);
+        setMessage("Błąd pobierania produktów: " + error.message);
         return;
       }
 
@@ -64,8 +65,11 @@ export default function AdminProductsPage() {
     loadProducts();
   }, []);
 
-  async function saveCategory(product) {
-    setSavingId(product.id);
+  async function saveProduct(event) {
+    event.preventDefault();
+    if (!editing) return;
+
+    setSaving(true);
     setMessage("");
 
     const { data: authData } = await supabase.auth.getUser();
@@ -83,51 +87,94 @@ export default function AdminProductsPage() {
 
     if (adminError || !admin) {
       setMessage("Brak uprawnień administratora.");
-      setSavingId(null);
+      setSaving(false);
       return;
     }
 
-    const { error } = await supabase
-      .from("products")
-      .update({ category: product.category })
-      .eq("id", product.id);
+    const price = Number(editing.price);
+    const stock = Number(editing.stock);
 
-    if (error) {
-      setMessage("Nie udało się zapisać kategorii. Sprawdzimy uprawnienia bazy.");
-    } else {
-      setMessage("Zapisano kategorię produktu.");
+    if (!Number.isFinite(price) || price < 0 ||
+        !Number.isInteger(stock) || stock < 0) {
+      setMessage("Cena musi być nieujemną liczbą, a stan nieujemną liczbą całkowitą.");
+      setSaving(false);
+      return;
     }
 
-    setSavingId(null);
+    const changes = {
+      name: editing.name.trim(),
+      brand: editing.brand || null,
+      category: editing.category || null,
+      price,
+      stock,
+      description: editing.description || null,
+      image_url: editing.image_url || null,
+      active: editing.active,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (!changes.name) {
+      setMessage("Wpisz nazwę produktu.");
+      setSaving(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("products")
+      .update(changes)
+      .eq("id", editing.id)
+      .select()
+      .maybeSingle();
+
+    if (error || !data) {
+      setMessage(
+        "Nie udało się zapisać. Sprawdź uprawnienia bazy i poprawność danych."
+      );
+      setSaving(false);
+      return;
+    }
+
+    setProducts((current) =>
+      current.map((item) => item.id === data.id ? data : item)
+    );
+    setEditing(null);
+    setMessage("Zapisano zmiany produktu.");
+    setSaving(false);
   }
 
   const filteredProducts = products.filter((product) =>
-    (product.name || "").toLowerCase().includes(search.toLowerCase())
+    `${product.name || ""} ${product.brand || ""} ${product.ean || ""}`
+      .toLowerCase()
+      .includes(search.toLowerCase())
   );
+
+  const fieldStyle = {
+    display: "block",
+    boxSizing: "border-box",
+    width: "100%",
+    padding: 12,
+    margin: "6px 0 14px",
+    border: "1px solid #cbd5e1",
+    borderRadius: 8,
+    fontSize: 16,
+    background: "white",
+  };
 
   return (
     <main style={styles.page}>
       <header style={styles.header}>
         <h1 style={{ margin: 0 }}>🐾 ZOO DELFIN</h1>
-        <p style={{ marginBottom: 0 }}>Panel zarządzania produktami</p>
+        <p>Panel administratora · Katalog produktów</p>
       </header>
 
       <section style={styles.content}>
-        <h2>Przypisywanie kategorii</h2>
-        <p>
-          Wyszukaj produkt, wybierz kategorię i kliknij „Zapisz”.
-        </p>
-
+        <h2>Produkty ({products.length})</h2>
         <input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Szukaj produktu po nazwie..."
-          style={styles.search}
+          placeholder="Szukaj nazwy, marki lub EAN..."
+          style={fieldStyle}
         />
-
-        <p>
-          Wyświetlono {filteredProducts.length} z {products.length} produktów
-        </p>
 
         {message && <p role="status">{message}</p>}
 
@@ -136,44 +183,132 @@ export default function AdminProductsPage() {
             <article key={product.id} style={styles.card}>
               <strong>{product.name}</strong>
               <p style={styles.details}>
-                Cena: {product.price ?? "—"} zł · Stan: {product.stock ?? "—"}
+                {product.brand || "Bez marki"} · {product.price ?? "—"} zł ·
+                Stan: {product.stock ?? 0}
               </p>
-
-              <label htmlFor={"category-" + product.id}>
-                Kategoria
-              </label>
-              <select
-                id={"category-" + product.id}
-                value={product.category || ""}
-                onChange={(event) =>
-                  setProducts((current) =>
-                    current.map((item) =>
-                      item.id === product.id
-                        ? { ...item, category: event.target.value }
-                        : item
-                    )
-                  )
-                }
-                style={styles.select}
-              >
-                <option value="">Wybierz kategorię</option>
-                {categories.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
-                  </option>
-                ))}
-              </select>
-
+              <p style={styles.details}>
+                Kategoria: {product.category || "Nieprzypisana"}
+                {" · "}
+                {product.active ? "Widoczny w sklepie" : "Ukryty"}
+              </p>
               <button
-                onClick={() => saveCategory(product)}
-                disabled={!product.category || savingId === product.id}
+                type="button"
                 style={styles.button}
+                onClick={() => setEditing({
+                  ...product,
+                  price: String(product.price ?? 0),
+                  stock: String(product.stock ?? 0),
+                  name: product.name || "",
+                  brand: product.brand || "",
+                  category: product.category || "",
+                  description: product.description || "",
+                  image_url: product.image_url || "",
+                  active: product.active !== false,
+                })}
               >
-                {savingId === product.id ? "Zapisywanie..." : "Zapisz"}
+                Edytuj produkt
               </button>
             </article>
           ))}
         </div>
+
+        {editing && (
+          <div style={styles.overlay}>
+            <form onSubmit={saveProduct} style={styles.form}>
+              <h2>Edytuj produkt</h2>
+
+              <label>Nazwa produktu</label>
+              <input
+                required
+                value={editing.name}
+                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                style={fieldStyle}
+              />
+
+              <label>Marka</label>
+              <input
+                value={editing.brand}
+                onChange={(e) => setEditing({ ...editing, brand: e.target.value })}
+                style={fieldStyle}
+              />
+
+              <label>Kategoria</label>
+              <select
+                value={editing.category}
+                onChange={(e) => setEditing({ ...editing, category: e.target.value })}
+                style={fieldStyle}
+              >
+                <option value="">Bez kategorii</option>
+                {categories.map((category) => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+
+              <label>Cena sprzedaży (zł)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                required
+                value={editing.price}
+                onChange={(e) => setEditing({ ...editing, price: e.target.value })}
+                style={fieldStyle}
+              />
+
+              <label>Stan magazynowy (szt.)</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                required
+                value={editing.stock}
+                onChange={(e) => setEditing({ ...editing, stock: e.target.value })}
+                style={fieldStyle}
+              />
+
+              <label>Adres zdjęcia (URL)</label>
+              <input
+                type="url"
+                value={editing.image_url}
+                onChange={(e) => setEditing({ ...editing, image_url: e.target.value })}
+                placeholder="https://..."
+                style={fieldStyle}
+              />
+
+              <label>Opis produktu</label>
+              <textarea
+                value={editing.description}
+                onChange={(e) => setEditing({ ...editing, description: e.target.value })}
+                rows={4}
+                style={fieldStyle}
+              />
+
+              <label style={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={editing.active}
+                  onChange={(e) => setEditing({ ...editing, active: e.target.checked })}
+                />
+                Produkt widoczny w sklepie
+              </label>
+
+              <p style={styles.details}>
+                Stan 0 nie ukrywa produktu automatycznie. Produkt może być widoczny jako niedostępny.
+              </p>
+
+              <button disabled={saving} type="submit" style={styles.button}>
+                {saving ? "Zapisywanie..." : "Zapisz zmiany"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditing(null)}
+                style={styles.cancel}
+              >
+                Anuluj
+              </button>
+            </form>
+          </div>
+        )}
       </section>
     </main>
   );
@@ -189,25 +324,16 @@ const styles = {
   header: {
     background: "#17324d",
     color: "white",
-    padding: "24px 18px",
+    padding: "22px 18px",
   },
   content: {
-    maxWidth: 850,
+    maxWidth: 950,
     margin: "0 auto",
     padding: 18,
   },
-  search: {
-    boxSizing: "border-box",
-    width: "100%",
-    padding: 14,
-    fontSize: 16,
-    border: "1px solid #cbd5e1",
-    borderRadius: 10,
-    margin: "10px 0",
-  },
   list: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
     gap: 14,
   },
   card: {
@@ -220,17 +346,6 @@ const styles = {
     color: "#64748b",
     fontSize: 14,
   },
-  select: {
-    display: "block",
-    boxSizing: "border-box",
-    width: "100%",
-    padding: 12,
-    margin: "8px 0 12px",
-    border: "1px solid #cbd5e1",
-    borderRadius: 8,
-    background: "white",
-    fontSize: 16,
-  },
   button: {
     width: "100%",
     padding: 13,
@@ -240,5 +355,38 @@ const styles = {
     color: "white",
     fontSize: 16,
     fontWeight: "bold",
+    cursor: "pointer",
+    marginTop: 8,
+  },
+  cancel: {
+    width: "100%",
+    padding: 12,
+    border: "1px solid #cbd5e1",
+    borderRadius: 8,
+    background: "white",
+    color: "#17324d",
+    fontSize: 16,
+    marginTop: 8,
+  },
+  overlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.55)",
+    zIndex: 10,
+    overflowY: "auto",
+    padding: 16,
+  },
+  form: {
+    background: "white",
+    maxWidth: 560,
+    margin: "12px auto",
+    padding: 22,
+    borderRadius: 14,
+  },
+  checkboxLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    margin: "14px 0",
   },
 };
